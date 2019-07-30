@@ -24,43 +24,10 @@ params.gene_bed = params.genomes[params.genome]?.gene_bed
 params.macs_gsize = params.genomes[params.genome]?.macs_gsize
 params.blacklist = params.genomes[params.genome]?.blacklist
 
-
-/*
- * Has the run name been specified by the user?
- * This has the bonus effect of catching both -name and --name
- */
-params.run_name = params.name
-if (!(workflow.runName ==~ /[a-z]+_[a-z]+/)){
-    params.run_name = workflow.runName
-}
-
-/*
- * Load pipeline module
- */
-include 'modules/pipeline_parameters' params(params)
-
-/*
- * Print help message if required
- */
-if (params.help){
-    print_help()
-    exit 0
-}
-
-/*
- * Print parameter summary
- */
-summary = create_summary()
-
-/*
- * Check the hostnames against configured profiles
- */
-include 'modules/check_hostname' params(params)
-check_hostname()
-
 /*
  * Create channels for pipeline-specific config files
  */
+
 // Pipeline documentation
 ch_output_docs = file("$baseDir/docs/output.md", checkIfExists: true)
 
@@ -83,41 +50,43 @@ ch_spp_nsc_header = file("$baseDir/assets/multiqc/spp_nsc_header.txt", checkIfEx
 ch_spp_rsc_header = file("$baseDir/assets/multiqc/spp_rsc_header.txt", checkIfExists: true)
 
 /*
- * Validate and create channels for inputs
+ * Has the run name been specified by the user?
+ * This has the bonus effect of catching both -name and --name
  */
-if (params.design)    { ch_design = file(params.design, checkIfExists: true) } else { exit 1, "Samples design file not specified!" }
-if (params.gtf)       { ch_gtf = file(params.gtf, checkIfExists: true) } else { exit 1, "GTF annotation file not specified!" }
-if (params.gene_bed)  { ch_gene_bed = file(params.gene.bed, checkIfExists: true) }
-if (params.tss_bed)   { ch_tss_bed = file(params.tss_bed, checkIfExists: true) }
-if (params.blacklist) { ch_blacklist = file(params.blacklist, checkIfExists: true) }
-
-if (params.fasta){
-    lastPath = params.fasta.lastIndexOf(File.separator)
-    bwa_base = params.fasta.substring(lastPath+1)
-    ch_fasta = file(params.fasta, checkIfExists: true)
-} else {
-    exit 1, "Fasta file not specified!"
+params.run_name = params.name
+if (!(workflow.runName ==~ /[a-z]+_[a-z]+/)){
+    params.run_name = workflow.runName
 }
 
-if (params.bwa_index){
-    lastPath = params.bwa_index.lastIndexOf(File.separator)
-    bwa_dir =  params.bwa_index.substring(0,lastPath+1)
-    bwa_base = params.bwa_index.substring(lastPath+1)
-    Channel
-        .fromPath(bwa_dir, checkIfExists: true)
-        .ifEmpty { exit 1, "BWA index directory not found: ${bwa_dir}" }
-        .set{ ch_bwa_index }
+/*
+ * Print help message if required
+ */
+if (params.help) {
+    include print_help from 'modules/pipeline_parameters' params(params)
+    print_help()
+    exit 0
 }
+
+/*
+ * Print parameter summary
+ */
+include create_summary from 'modules/pipeline_parameters' params(params)
+summary = create_summary()
+
+/*
+ * Check the hostnames against configured profiles
+ */
+include 'modules/check_hostname' params(params)
+check_hostname()
 
 /*
  * PREPROCESSING - Reformat design file, check validity and create IP vs control mappings
  */
+if (params.design) { ch_design = file(params.design, checkIfExists: true) } else { exit 1, "Samples design file not specified!" }
 include 'modules/check_design' params(params)
 check_design(ch_design)
 
-/*
- * Create channels for input fastq files
- */
+// Create channels for input fastq files
 if (params.singleEnd) {
     check_design.out
                 .first()
@@ -132,9 +101,7 @@ if (params.singleEnd) {
                 .set { ch_raw_reads }
 }
 
-/*
- * Create a channel with [sample_id, control id, antibody, replicatesExist, multipleGroups]
- */
+// Create a channel with [sample_id, control id, antibody, replicatesExist, multipleGroups]
 check_design.out
             .last()
             .splitCsv(header:true, sep:',')
@@ -144,7 +111,23 @@ check_design.out
 /*
  * PREPROCESSING - Build BWA index
  */
-if (!params.bwa_index){
+if (params.fasta) {
+    lastPath = params.fasta.lastIndexOf(File.separator)
+    bwa_base = params.fasta.substring(lastPath+1)
+    ch_fasta = file(params.fasta, checkIfExists: true)
+} else {
+    exit 1, "Fasta file not specified!"
+}
+
+if (params.bwa_index) {
+    lastPath = params.bwa_index.lastIndexOf(File.separator)
+    bwa_dir =  params.bwa_index.substring(0,lastPath+1)
+    bwa_base = params.bwa_index.substring(lastPath+1)
+    Channel
+        .fromPath(bwa_dir, checkIfExists: true)
+        .ifEmpty { exit 1, "BWA index directory not found: ${bwa_dir}" }
+        .set{ ch_bwa_index }
+} else {
     include 'modules/bwa_index' params(params)
     bwa_index(ch_fasta).set { ch_bwa_index }
 }
@@ -152,7 +135,10 @@ if (!params.bwa_index){
 /*
  * PREPROCESSING - Generate gene BED file
  */
-if (!params.gene_bed){
+if (params.gtf)       { ch_gtf = file(params.gtf, checkIfExists: true) } else { exit 1, "GTF annotation file not specified!" }
+if (params.gene_bed)  {
+    ch_gene_bed = file(params.gene.bed, checkIfExists: true)
+} else {
     include 'modules/gtf_to_bed' params(params)
     gtf_to_bed(ch_gtf).set { ch_gene_bed }
 }
@@ -160,7 +146,9 @@ if (!params.gene_bed){
 /*
  * PREPROCESSING - Generate TSS BED file
  */
-if (!params.tss_bed){
+if (params.tss_bed) {
+    ch_tss_bed = file(params.tss_bed, checkIfExists: true)
+} else {
     include 'modules/gene_to_tss_bed' params(params)
     gene_to_tss_bed(ch_gene_bed).set { ch_tss_bed }
 }
@@ -168,29 +156,30 @@ if (!params.tss_bed){
 /*
  * PREPROCESSING - Prepare genome intervals for filtering
  */
+if (params.blacklist) { ch_blacklist = file(params.blacklist, checkIfExists: true) }
 include 'modules/genome_filter' params(params)
 genome_filter(ch_fasta)
-//genome_filter.out[0].view()
 
 
-// /*
-//  * Output markdown documentation
-//  */
-// include 'modules/output_documentation' params(params)
-// output_documentation()
-//
-// /*
-//  * Get software versions
-//  */
-// include 'modules/get_software_versions' params(params)
-// get_software_versions()
-//
-// /*
-//  * Create workflow summary for MultiQC
-//  */
-// include 'modules/create_workflow_summary' params(params)
-// create_workflow_summary(summary)
-//
+
+/*
+ * Output markdown documentation
+ */
+include 'modules/output_documentation' params(params)
+output_documentation(ch_output_docs)
+
+/*
+ * Get software versions
+ */
+include 'modules/get_software_versions' params(params)
+get_software_versions()
+
+/*
+ * Create workflow summary for MultiQC
+ */
+include 'modules/create_workflow_summary'
+create_workflow_summary(summary)
+
 // /*
 //  * Send completion email
 //  */

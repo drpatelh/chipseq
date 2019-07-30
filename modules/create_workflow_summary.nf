@@ -1,5 +1,5 @@
 // Initialise parameters
-summary = null
+//params.summary = null
 
 /*
  * Create summary file for MultiQC

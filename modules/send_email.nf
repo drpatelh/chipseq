@@ -1,5 +1,4 @@
 // Initialise parameters
-summary = null
 params.outdir = './results'
 params.run_name = false
 params.email = false
@@ -10,6 +9,7 @@ params.monochrome_logs = false
 /*
  * Completion e-mail notification
  */
+//def send_email(summary, ch_multiqc_report) {
 def send_email(summary) {
 
     // Set up the e-mail variables

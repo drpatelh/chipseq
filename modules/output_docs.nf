@@ -4,7 +4,7 @@ params.outdir = './results'
 /*
  * Output description HTML
  */
-process output_documentation {
+process output_docs {
     publishDir "${params.outdir}/Documentation", mode: 'copy'
 
     input:

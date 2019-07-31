@@ -27,19 +27,6 @@ params.blacklist = params.genomes[params.genome]?.blacklist
 /*
  * Create channels for pipeline-specific config files
  */
-
-// Pipeline documentation
-ch_output_docs = file("$baseDir/docs/output.md", checkIfExists: true)
-
-// JSON files required by BAMTools for alignment filtering
-if (params.singleEnd) {
-    ch_bamtools_filter_config = file(params.bamtools_filter_se_config, checkIfExists: true)
-} else {
-    ch_bamtools_filter_config = file(params.bamtools_filter_pe_config, checkIfExists: true)
-}
-
-// Header files for MultiQC
-ch_multiqc_config = file(params.multiqc_config, checkIfExists: true)
 ch_peak_count_header = file("$baseDir/assets/multiqc/peak_count_header.txt", checkIfExists: true)
 ch_frip_score_header = file("$baseDir/assets/multiqc/frip_score_header.txt", checkIfExists: true)
 ch_peak_annotation_header = file("$baseDir/assets/multiqc/peak_annotation_header.txt", checkIfExists: true)
@@ -62,7 +49,7 @@ if (!(workflow.runName ==~ /[a-z]+_[a-z]+/)){
  * Print help message if required
  */
 if (params.help) {
-    include print_help from 'modules/pipeline_parameters' params(params)
+    include print_help from 'modules/pipeline_params' params(params)
     print_help()
     exit 0
 }
@@ -70,7 +57,7 @@ if (params.help) {
 /*
  * Print parameter summary
  */
-include create_summary from 'modules/pipeline_parameters' params(params)
+include create_summary from 'modules/pipeline_params' params(params)
 summary = create_summary()
 
 /*
@@ -135,8 +122,8 @@ if (params.bwa_index) {
 /*
  * PREPROCESSING - Generate gene BED file
  */
-if (params.gtf)       { ch_gtf = file(params.gtf, checkIfExists: true) } else { exit 1, "GTF annotation file not specified!" }
-if (params.gene_bed)  {
+if (params.gtf) { ch_gtf = file(params.gtf, checkIfExists: true) } else { exit 1, "GTF annotation file not specified!" }
+if (params.gene_bed) {
     ch_gene_bed = file(params.gene.bed, checkIfExists: true)
 } else {
     include 'modules/gtf_to_bed' params(params)
@@ -157,16 +144,30 @@ if (params.tss_bed) {
  * PREPROCESSING - Prepare genome intervals for filtering
  */
 if (params.blacklist) { ch_blacklist = file(params.blacklist, checkIfExists: true) }
+if (params.singleEnd) {
+    ch_bamtools_filter_config = file(params.bamtools_filter_se_config, checkIfExists: true)
+} else {
+    ch_bamtools_filter_config = file(params.bamtools_filter_pe_config, checkIfExists: true)
+}
 include 'modules/genome_filter' params(params)
 genome_filter(ch_fasta)
 
 
+/*
+ * STEP 1 - FastQC
+ */
+include 'modules/fastqc' params(params)
+fastqc(ch_raw_reads)
 
 /*
- * Output markdown documentation
+ * STEP 2 - Trim Galore!
  */
-include 'modules/output_documentation' params(params)
-output_documentation(ch_output_docs)
+ include 'modules/trimgalore' params(params)
+ trimgalore(ch_raw_reads)
+
+
+
+
 
 /*
  * Get software versions
@@ -175,10 +176,22 @@ include 'modules/get_software_versions' params(params)
 get_software_versions()
 
 /*
- * Create workflow summary for MultiQC
+ * MultiQC
  */
-include 'modules/create_workflow_summary'
-create_workflow_summary(summary)
+
+// Create workflow summary for MultiQC
+include 'modules/multiqc_workflow_summary'
+multiqc_workflow_summary(summary)
+
+ch_multiqc_config = file(params.multiqc_config, checkIfExists: true)
+
+
+/*
+ * Output markdown documentation
+ */
+ch_output_docs = file("$baseDir/docs/output.md", checkIfExists: true)
+include 'modules/output_docs' params(params)
+output_docs(ch_output_docs)
 
 // /*
 //  * Send completion email
@@ -188,105 +201,6 @@ create_workflow_summary(summary)
 //     send_email(summary)
 // }
 
-// ///////////////////////////////////////////////////////////////////////////////
-// ///////////////////////////////////////////////////////////////////////////////
-// /* --                                                                     -- */
-// /* --                        FASTQ QC                                     -- */
-// /* --                                                                     -- */
-// ///////////////////////////////////////////////////////////////////////////////
-// ///////////////////////////////////////////////////////////////////////////////
-//
-// /*
-//  * STEP 1 - FastQC
-//  */
-// process fastqc {
-//     tag "$name"
-//     label 'process_medium'
-//     publishDir "${params.outdir}/fastqc", mode: 'copy',
-//         saveAs: {filename -> filename.endsWith(".zip") ? "zips/$filename" : "$filename"}
-//
-//     when:
-//     !params.skipFastQC
-//
-//     input:
-//     set val(name), file(reads) from ch_raw_reads_fastqc
-//
-//     output:
-//     file "*.{zip,html}" into ch_fastqc_reports_mqc
-//
-//     script:
-//     // Added soft-links to original fastqs for consistent naming in MultiQC
-//     if (params.singleEnd) {
-//         """
-//         [ ! -f  ${name}.fastq.gz ] && ln -s $reads ${name}.fastq.gz
-//         fastqc -q ${name}.fastq.gz
-//         """
-//     } else {
-//         """
-//         [ ! -f  ${name}_1.fastq.gz ] && ln -s ${reads[0]} ${name}_1.fastq.gz
-//         [ ! -f  ${name}_2.fastq.gz ] && ln -s ${reads[1]} ${name}_2.fastq.gz
-//         fastqc -q ${name}_1.fastq.gz
-//         fastqc -q ${name}_2.fastq.gz
-//         """
-//     }
-// }
-//
-// ///////////////////////////////////////////////////////////////////////////////
-// ///////////////////////////////////////////////////////////////////////////////
-// /* --                                                                     -- */
-// /* --                        ADAPTER TRIMMING                             -- */
-// /* --                                                                     -- */
-// ///////////////////////////////////////////////////////////////////////////////
-// ///////////////////////////////////////////////////////////////////////////////
-//
-// /*
-//  * STEP 2 - Trim Galore!
-//  */
-// if (params.skipTrimming){
-//     ch_trimmed_reads = ch_raw_reads_trimgalore
-//     ch_trimgalore_results_mqc = []
-//     ch_trimgalore_fastqc_reports_mqc = []
-// } else {
-//     process trimGalore {
-//         tag "$name"
-//         label 'process_long'
-//         publishDir "${params.outdir}/trim_galore", mode: 'copy',
-//             saveAs: {filename ->
-//                 if (filename.endsWith(".html")) "fastqc/$filename"
-//                 else if (filename.endsWith(".zip")) "fastqc/zips/$filename"
-//                 else if (filename.endsWith("trimming_report.txt")) "logs/$filename"
-//                 else params.saveTrimmed ? filename : null
-//             }
-//
-//         input:
-//         set val(name), file(reads) from ch_raw_reads_trimgalore
-//
-//         output:
-//         set val(name), file("*.fq.gz") into ch_trimmed_reads
-//         file "*.txt" into ch_trimgalore_results_mqc
-//         file "*.{zip,html}" into ch_trimgalore_fastqc_reports_mqc
-//
-//         script:
-//         // Added soft-links to original fastqs for consistent naming in MultiQC
-//         c_r1 = params.clip_r1 > 0 ? "--clip_r1 ${params.clip_r1}" : ''
-//         c_r2 = params.clip_r2 > 0 ? "--clip_r2 ${params.clip_r2}" : ''
-//         tpc_r1 = params.three_prime_clip_r1 > 0 ? "--three_prime_clip_r1 ${params.three_prime_clip_r1}" : ''
-//         tpc_r2 = params.three_prime_clip_r2 > 0 ? "--three_prime_clip_r2 ${params.three_prime_clip_r2}" : ''
-//         if (params.singleEnd) {
-//             """
-//             [ ! -f  ${name}.fastq.gz ] && ln -s $reads ${name}.fastq.gz
-//             trim_galore --fastqc --gzip $c_r1 $tpc_r1 ${name}.fastq.gz
-//             """
-//         } else {
-//             """
-//             [ ! -f  ${name}_1.fastq.gz ] && ln -s ${reads[0]} ${name}_1.fastq.gz
-//             [ ! -f  ${name}_2.fastq.gz ] && ln -s ${reads[1]} ${name}_2.fastq.gz
-//             trim_galore --paired --fastqc --gzip $c_r1 $c_r2 $tpc_r1 $tpc_r2 ${name}_1.fastq.gz ${name}_2.fastq.gz
-//             """
-//         }
-//     }
-// }
-//
 // ///////////////////////////////////////////////////////////////////////////////
 // ///////////////////////////////////////////////////////////////////////////////
 // /* --                                                                     -- */

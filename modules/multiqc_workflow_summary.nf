@@ -4,7 +4,7 @@
 /*
  * Create summary file for MultiQC
  */
-def create_workflow_summary(summary) {
+def multiqc_workflow_summary(summary) {
 
     def yaml_file = workDir.resolve('workflow_summary_mqc.yaml')
     yaml_file.text  = """

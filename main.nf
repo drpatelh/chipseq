@@ -12,7 +12,7 @@
 nextflow.preview.dsl = 2
 
 /*
- * Check/set parameters
+ * Check/set pipeline-specific parameters
  */
 if (params.genomes && params.genome && !params.genomes.containsKey(params.genome)) {
     exit 1, "The provided genome '${params.genome}' is not available in the iGenomes file. Currently the available genomes are ${params.genomes.keySet().join(", ")}"
@@ -162,8 +162,8 @@ fastqc(ch_raw_reads)
 /*
  * STEP 2 - Trim Galore!
  */
- include 'modules/trimgalore' params(params)
- trimgalore(ch_raw_reads)
+include 'modules/trimgalore' params(params)
+trimgalore(ch_raw_reads)
 
 
 

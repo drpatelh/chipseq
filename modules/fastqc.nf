@@ -5,7 +5,7 @@ params.skipFastQC = false
 
 process fastqc {
     tag "$sample_id"
-    //label 'process_medium'
+    label 'process_medium'
     publishDir "${params.outdir}/fastqc", mode: 'copy',
         saveAs: {filename -> filename.endsWith(".zip") ? "zips/$filename" : "$filename"}
 
